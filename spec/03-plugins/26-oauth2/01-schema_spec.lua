@@ -1,8 +1,6 @@
 local helpers         = require "spec.helpers"
-local validate_entity = require("kong.dao.schemas_validation").validate_entity
 local utils           = require "kong.tools.utils"
 
-local oauth2_schema   = require "kong.plugins.oauth2.schema"
 local fmt = string.format
 
 for _, strategy in helpers.each_strategy() do
@@ -13,69 +11,88 @@ for _, strategy in helpers.each_strategy() do
     local oauth2_authorization_codes_schema = db.oauth2_authorization_codes.schema
     local oauth2_tokens_schema = db.oauth2_tokens.schema
 
+    local validate_config = function(config)
+      local plugins_schema = db.plugins.schema
+      local entity_to_insert, err = plugins_schema:process_auto_fields({
+        id = "b5e7b55e-cd5e-47ef-952d-ba1754dbf18e",
+        name = "oauth2",
+        config = config
+      })
+      if err then
+        return nil, err
+      end
+      local _, err = plugins_schema:validate_insert(entity_to_insert)
+      if err then return
+        nil, err
+      end
+      return entity_to_insert
+    end
+
     it("does not require `scopes` when `mandatory_scope` is false", function()
-      local ok, errors = validate_entity({enable_authorization_code = true, mandatory_scope = false}, oauth2_schema)
-      assert.True(ok)
-      assert.is_nil(errors)
+      local ok, errors = validate_config({enable_authorization_code = true, mandatory_scope = false})
+      assert.is_truthy(ok)
+      assert.is_falsy(errors)
     end)
     it("valid when both `scopes` when `mandatory_scope` are given", function()
-      local ok, errors = validate_entity({enable_authorization_code = true, mandatory_scope = true, scopes = {"email", "info"}}, oauth2_schema)
-      assert.True(ok)
-      assert.is_nil(errors)
+      local ok, errors = validate_config({enable_authorization_code = true, mandatory_scope = true, scopes = {"email", "info"}})
+      assert.truthy(ok)
+      assert.is_falsy(errors)
     end)
     it("autogenerates `provision_key` when not given", function()
       local t = {enable_authorization_code = true, mandatory_scope = true, scopes = {"email", "info"}}
-      local ok, errors = validate_entity(t, oauth2_schema)
-      assert.True(ok)
-      assert.is_nil(errors)
-      assert.truthy(t.provision_key)
-      assert.equal(32, t.provision_key:len())
+      local t2, errors = validate_config(t)
+      assert.is_falsy(errors)
+      assert.truthy(t2.config.provision_key)
+      assert.equal(32, t2.config.provision_key:len())
     end)
     it("does not autogenerate `provision_key` when it is given", function()
       local t = {enable_authorization_code = true, mandatory_scope = true, scopes = {"email", "info"}, provision_key = "hello"}
-      local ok, errors = validate_entity(t, oauth2_schema)
-      assert.True(ok)
-      assert.is_nil(errors)
+      local ok, errors = validate_config(t)
+      assert.truthy(ok)
+      assert.is_falsy(errors)
       assert.truthy(t.provision_key)
       assert.equal("hello", t.provision_key)
     end)
     it("sets default `auth_header_name` when not given", function()
       local t = {enable_authorization_code = true, mandatory_scope = true, scopes = {"email", "info"}}
-      local ok, errors = validate_entity(t, oauth2_schema)
-      assert.True(ok)
-      assert.is_nil(errors)
-      assert.truthy(t.provision_key)
-      assert.equal(32, t.provision_key:len())
-      assert.equal("authorization", t.auth_header_name)
+      local t2, errors = validate_config(t)
+      assert.truthy(t2)
+      assert.is_falsy(errors)
+      assert.truthy(t2.config.provision_key)
+      assert.equal(32, t2.config.provision_key:len())
+      assert.equal("authorization", t2.config.auth_header_name)
     end)
     it("does not set default value for `auth_header_name` when it is given", function()
       local t = {enable_authorization_code = true, mandatory_scope = true, scopes = {"email", "info"}, provision_key = "hello",
       auth_header_name="custom_header_name"}
-      local ok, errors = validate_entity(t, oauth2_schema)
-      assert.True(ok)
-      assert.is_nil(errors)
-      assert.truthy(t.provision_key)
-      assert.equal("hello", t.provision_key)
-      assert.equal("custom_header_name", t.auth_header_name)
+      local t2, errors = validate_config(t)
+      assert.truthy(t2)
+      assert.is_falsy(errors)
+      assert.truthy(t2.config.provision_key)
+      assert.equal("hello", t2.config.provision_key)
+      assert.equal("custom_header_name", t2.config.auth_header_name)
     end)
     it("sets refresh_token_ttl to default value if not set", function()
       local t = {enable_authorization_code = true, mandatory_scope = false}
-      local ok, errors = validate_entity(t, oauth2_schema)
-      assert.True(ok)
-      assert.is_nil(errors)
-      assert.equal(1209600, t.refresh_token_ttl)
+      local t2, errors = validate_config(t)
+      assert.truthy(t2)
+      assert.is_falsy(errors)
+      assert.equal(1209600, t2.config.refresh_token_ttl)
     end)
 
     describe("errors", function()
       it("requires at least one flow", function()
-        local ok, _, err = validate_entity({}, oauth2_schema)
-        assert.False(ok)
-        assert.equal("You need to enable at least one OAuth flow", tostring(err))
+        local ok, err = validate_config({})
+        assert.is_falsy(ok)
+
+        assert.same("at least one of these fields must be true: enable_authorization_code, enable_implicit_grant, enable_client_credentials, enable_password_grant",
+                     err.config)
       end)
       it("requires `scopes` when `mandatory_scope` is true", function()
-        local ok, errors = validate_entity({enable_authorization_code = true, mandatory_scope = true}, oauth2_schema)
-        assert.False(ok)
-        assert.equal("To set a mandatory scope you also need to create available scopes", errors.mandatory_scope)
+        local ok, err = validate_config({enable_authorization_code = true, mandatory_scope = true})
+        assert.is_falsy(ok)
+        assert.equal("required field missing",
+                     err.config.scopes)
       end)
       it("errors when given an invalid service_id on oauth tokens", function()
         local ok, err_t = oauth2_tokens_schema:validate_insert({
@@ -113,7 +130,7 @@ for _, strategy in helpers.each_strategy() do
         assert.is_nil(err_t)
       end)
 
-      it("#errors when given an invalid service_id on oauth authorization codes", function()
+      it("errors when given an invalid service_id on oauth authorization codes", function()
         local ok, err_t = oauth2_authorization_codes_schema:validate_insert({
           credential = { id = "foo" },
           service = { id = "bar" },
@@ -173,8 +190,8 @@ for _, strategy in helpers.each_strategy() do
 
         ok, err, err_t = db.services:delete({ id = service.id })
         assert.truthy(ok)
-        assert.is_nil(err_t)
-        assert.is_nil(err)
+        assert.is_falsy(err_t)
+        assert.is_falsy(err)
 
         -- no more service
         service, err = db.services:select({ id = service.id })
