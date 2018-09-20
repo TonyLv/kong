@@ -1247,10 +1247,11 @@ function Schema:process_auto_fields(input, context, nulls)
   for key, field in self:each_field(input) do
 
     if field.auto then
-      if field.uuid and context == "insert" and output[key] == nil then
-        output[key] = utils.uuid()
-      elseif field.uuid and context == "upsert" and output[key] == nil then
-        output[key] = utils.uuid()
+      if field.uuid then
+        if (context == "insert" or context == "upsert") and
+           output[key] == nil or output[key] == "" then
+          output[key] = utils.uuid()
+        end
 
       elseif (key == "created_at" and (context == "insert" or
                                        context == "upsert")) or
@@ -1264,9 +1265,9 @@ function Schema:process_auto_fields(input, context, nulls)
           output[key] = now_s
         end
 
-      elseif field.type == "string" and output[key] == nil
-                                    and (context == "insert" or
-                                         context == "upsert") then
+      elseif field.type == "string" and
+          (context == "insert" or context == "upsert") and
+          (output[key] == nil or output[key] == "") then
         output[key] = utils.random_string()
       end
     end
